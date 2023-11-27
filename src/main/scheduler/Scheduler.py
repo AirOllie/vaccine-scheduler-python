@@ -18,10 +18,61 @@ current_caregiver = None
 
 
 def create_patient(tokens):
-    """
-    TODO: Part 1
-    """
-    pass
+    # create_patient <username> <password>
+    # check 1: the length for tokens need to be exactly 3 to include all information (with the operation name)
+    if len(tokens) != 3:
+        print("Failed to create user.")
+        return
+
+    username = tokens[1]
+    password = tokens[2]
+    # check 2: check if the username has been taken already
+    if username_exists_patient(username):
+        print("Username taken, try again!")
+        return
+
+    salt = Util.generate_salt()
+    hash = Util.generate_hash(password, salt)
+
+    # create the patient
+    patient = Patient(username, salt=salt, hash=hash)
+
+    # save patient information to the database
+    try:
+        patient.save_to_db()
+    except pymssql.Error as e:
+        print("Failed to create user.")
+        print("Db-Error:", e)
+        quit()
+    except Exception as e:
+        print("Failed to create user.")
+        print(e)
+        return
+    print("Created user ", username)
+
+
+def username_exists_patient(username):
+    cm = ConnectionManager()
+    conn = cm.create_connection()
+
+    select_username = "SELECT * FROM Patients WHERE Username = %s"
+    try:
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(select_username, username)
+        #  returns false if the cursor is not before the first record or if there are no rows in the ResultSet.
+        for row in cursor:
+            return row['Username'] is not None
+    except pymssql.Error as e:
+        print("Error occurred when checking username")
+        print("Db-Error:", e)
+        quit()
+    except Exception as e:
+        print("Error occurred when checking username")
+        print("Error:", e)
+    finally:
+        cm.close_connection()
+    return False
+    
 
 
 def create_caregiver(tokens):
@@ -82,10 +133,39 @@ def username_exists_caregiver(username):
 
 
 def login_patient(tokens):
-    """
-    TODO: Part 1
-    """
-    pass
+    # login_patient <username> <password>
+    # check 1: if someone's already logged-in, they need to log out first
+    global current_patient
+    if current_patient is not None or current_caregiver is not None:
+        print("User already logged in.")
+        return
+
+    # check 2: the length for tokens need to be exactly 3 to include all information (with the operation name)
+    if len(tokens) != 3:
+        print("Login failed.")
+        return
+
+    username = tokens[1]
+    password = tokens[2]
+
+    patient = None
+    try:
+        patient = Patient(username, password=password).get()
+    except pymssql.Error as e:
+        print("Login failed.")
+        print("Db-Error:", e)
+        quit()
+    except Exception as e:
+        print("Login failed.")
+        print("Error:", e)
+        return
+
+    # check if the login was successful
+    if patient is None:
+        print("Login failed.")
+    else:
+        print("Logged in as: " + username)
+        current_patient = patient
 
 
 def login_caregiver(tokens):
