@@ -66,19 +66,3 @@ class Patient:
         finally:
             cm.close_connection()
 
-    # Insert availability with parameter date d
-    def upload_availability(self, d):
-        cm = ConnectionManager()
-        conn = cm.create_connection()
-        cursor = conn.cursor()
-
-        add_availability = "INSERT INTO Availabilities VALUES (%s , %s)"
-        try:
-            cursor.execute(add_availability, (d, self.username))
-            # you must call commit() to persist your data if you don't set autocommit to True
-            conn.commit()
-        except pymssql.Error:
-            # print("Error occurred when updating patient availability")
-            raise
-        finally:
-            cm.close_connection()

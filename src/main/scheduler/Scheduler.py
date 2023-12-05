@@ -205,17 +205,110 @@ def login_caregiver(tokens):
 
 
 def search_caregiver_schedule(tokens):
-    """
-    TODO: Part 2
-    """
-    pass
+    # search_caregiver_schedule <date>
+
+    # Output the username for the caregivers that are available for the date, along with the number of available doses 
+    # left for each vaccine. Order by the username of the caregiver. Separate each attribute with a space.
+
+    # check 1: if no user is logged in, print "Please login first!"
+    # both caregiver and patient can search for caregiver schedules
+
+    global current_caregiver
+    global current_patient
+
+    if current_caregiver is None and current_patient is None:
+        print("Please login first!")
+        return
+
+    # check 2: the length for tokens need to be exactly 2 to include all information (with the operation name)
+    if len(tokens) != 2:
+        print("Please try again!")
+        return
+
+    cm = ConnectionManager()
+    conn = cm.create_connection()
+    date = tokens[1]
+    select_caregiver = "SELECT * FROM Caregivers WHERE Username NOT IN (SELECT Caregiver_name FROM Availabilities WHERE Date = %s) ORDER BY Username ASC"
+    cursor = conn.cursor(as_dict=True)
+    cursor.execute(select_caregiver, date)
+    caregivers = cursor.fetchall()
+    if len(caregivers) == 0:
+        print("No Caregiver is available on {}!".format(date))
+    else: 
+        print("Available caregivers:")
+        for row in caregivers:
+            print(row['Username'])
+    print("######################")
+    select_vaccine = "SELECT * FROM Vaccines ORDER BY Name ASC"
+    cursor.execute(select_vaccine)
+    print("Available vaccines in doses:")
+    for row in cursor:
+        print(row['Name'], row['Doses'])
+    return
 
 
 def reserve(tokens):
-    """
-    TODO: Part 2
-    """
-    pass
+    # reserve <date> <vaccine>
+    
+    # Patients perform this operation to reserve an appointment.
+    # Caregivers can only see a maximum of one patient per day, meaning that if the reservation went through, the caregiver is no longer available for that date.
+    # If there are available caregivers, choose the caregiver by alphabetical order and print “Appointment ID: {appointment_id}, Caregiver username: {username}” for the reservation.
+    # If there’s no available caregiver, print “No Caregiver is available!”. If not enough vaccine doses are available, print "Not enough available doses!".
+    # If no user is logged in, print “Please login first!”. If the current user logged in is not a patient, print “Please login as a patient!”.
+    # For all other errors, print "Please try again!".
+    
+    global current_patient
+    global current_caregiver
+    
+    if current_caregiver is None and current_patient is None:
+        print("Please login first!")
+        return
+
+    if current_patient is None:
+        print("Please login as a patient!")
+        return
+    
+    if len(tokens) != 3:
+        print("Please try again!")
+        return
+    
+    date = tokens[1]
+    vaccine = tokens[2]
+    
+    cm = ConnectionManager()
+    conn = cm.create_connection()
+    
+    # Check if there are available caregivers for the given date
+    select_caregiver = "SELECT * FROM Caregivers WHERE Username NOT IN (SELECT Caregiver_name FROM Availabilities WHERE Date = %s) ORDER BY Username ASC"
+    cursor = conn.cursor(as_dict=True)
+    cursor.execute(select_caregiver, date)
+    caregivers = cursor.fetchall()
+    
+    if len(caregivers) == 0:
+        print("No Caregiver is available!")
+        return
+    
+    # Check if there are enough vaccine doses available
+    select_vaccine = "SELECT * FROM Vaccines WHERE Name = %s"
+    cursor.execute(select_vaccine, vaccine)
+    vaccine_info = cursor.fetchone()
+    
+    if vaccine_info['Doses'] == 0:
+        print("Not enough available doses!")
+        return
+    
+    # Reserve the appointment
+    caregiver_username = caregivers[0]['Username']
+    appointment_id = str(int(int(datetime.datetime.now().timestamp()*1e6)%1e8)).zfill(8)
+    
+    insert_appointment = "INSERT INTO Appointments (Appointment_id, Date, Patient_name, Caregiver_name, Vaccine_name) VALUES (%s, %s, %s, %s, %s)"
+    cursor.execute(insert_appointment, (appointment_id, date, current_patient.username, caregiver_username, vaccine))
+    conn.commit()
+    
+    Caregiver(caregiver_username).upload_availability(date)
+    Vaccine(vaccine, vaccine_info['Doses']).decrease_available_doses(1)
+    
+    print(f"Appointment ID: {appointment_id}, Caregiver username: {caregiver_username}")
 
 
 def upload_availability(tokens):
@@ -255,10 +348,48 @@ def upload_availability(tokens):
 
 
 def cancel(tokens):
-    """
-    TODO: Extra Credit
-    """
-    pass
+    # cancel <appointment_id>
+    
+    # Both caregivers and patients can cancel an existing appointment.
+    # The appointment ID is used to identify the appointment to be canceled.
+    # When an appointment is canceled, it should be removed from both the patient's and caregiver's schedules.
+    # If no user is logged in, print "Please login first!".
+    # For all other errors, print "Please try again!".
+    
+    global current_caregiver
+    global current_patient
+
+    if current_caregiver is None and current_patient is None:
+        print("Please login first!")
+        return
+
+    if len(tokens) != 2:
+        print("Please try again!")
+        return
+
+    appointment_id = tokens[1]
+    cm = ConnectionManager()
+    conn = cm.create_connection()
+    cursor = conn.cursor()
+
+    # add one dose back to the vaccine
+    select_appointment = "SELECT * FROM Appointments WHERE Appointment_id = %s"
+    cursor.execute(select_appointment, appointment_id)
+    vaccine_name = cursor.fetchone()[-1]
+    select_vaccine = "SELECT * FROM Vaccines WHERE Name = %s"
+    cursor.execute(select_vaccine, vaccine_name)
+    vaccine_info = cursor.fetchone()
+    Vaccine(vaccine_name, vaccine_info[-1]).increase_available_doses(1)
+
+    delete_availability = "DELETE FROM Availabilities WHERE Date = (SELECT Date FROM Appointments WHERE Appointment_id = %s)"
+    cursor.execute(delete_availability, appointment_id)
+    delete_appointment = "DELETE FROM Appointments WHERE Appointment_id = %s"
+    cursor.execute(delete_appointment, appointment_id)
+    
+    conn.commit()
+    
+    print("Appointment canceled!")
+    return
 
 
 def add_doses(tokens):
@@ -318,17 +449,74 @@ def add_doses(tokens):
 
 
 def show_appointments(tokens):
-    '''
-    TODO: Part 2
-    '''
-    pass
+    # show_appointments
+
+    # Output the scheduled appointments for the current user (both patients and caregivers). 
+    # For caregivers, you should print the appointment ID, vaccine name, date, and patient name. Order by the appointment ID. Separate each attribute with a space.
+    # For patients, you should print the appointment ID, vaccine name, date, and caregiver name. Order by the appointment ID. Separate each attribute with a space.
+    # If no user is logged in, print “Please login first!”.
+    # For all other errors, print "Please try again!".
+    
+    global current_caregiver
+    global current_patient
+
+    if current_caregiver is None and current_patient is None:
+        print("Please login first!")
+        return
+    
+    if len(tokens) != 1:
+        print("Please try again!")
+        return
+
+    if current_caregiver is None:
+        # Show appointments for patients
+        select_appointments = "SELECT * FROM Appointments WHERE Patient_name = %s ORDER BY Appointment_id ASC"
+        cm = ConnectionManager()
+        conn = cm.create_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(select_appointments, current_patient.username)
+        appointments = cursor.fetchall()
+        if len(appointments) == 0:
+            print("No appointments found!")
+            return
+        else:
+            print("Appointment ID | Vaccine Name | Date | Caregiver Name")
+            for row in appointments:
+                print(f"{row['Appointment_id']} {row['Vaccine_name']} {row['Date']} {row['Caregiver_name']}")
+    else:
+        # Show appointments for caregivers
+        select_appointments = "SELECT * FROM Appointments WHERE Caregiver_name = %s ORDER BY Appointment_id ASC"
+        cm = ConnectionManager()
+        conn = cm.create_connection()
+        cursor = conn.cursor(as_dict=True)
+        cursor.execute(select_appointments, current_caregiver.username)
+        appointments = cursor.fetchall()
+        if len(appointments) == 0:
+            print("No appointments found!")
+            return
+        else:
+            print("Appointment ID | Vaccine Name | Date | Patient Name")
+            for row in appointments:
+                print(f"{row['Appointment_id']} {row['Vaccine_name']} {row['Date']} {row['Patient_name']}")
 
 
 def logout(tokens):
-    """
-    TODO: Part 2
-    """
-    pass
+    # logout
+
+    global current_caregiver
+    global current_patient
+
+    if current_caregiver is None and current_patient is None:
+        print("Please login first.")
+        return
+
+    if len(tokens) != 1:
+        print("Please try again!")
+        return
+
+    current_caregiver = None
+    current_patient = None
+    print("Successfully logged out!")
 
 
 def start():
@@ -378,7 +566,7 @@ def start():
             reserve(tokens)
         elif operation == "upload_availability":
             upload_availability(tokens)
-        elif operation == cancel:
+        elif operation == "cancel":
             cancel(tokens)
         elif operation == "add_doses":
             add_doses(tokens)
